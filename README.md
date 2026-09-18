@@ -1,17 +1,12 @@
-# Baltic Infrastructure Monitor v1.0
+# Baltic Infrastructure Monitor v1.2
 
-Customer-demo prototype for maritime situational awareness and critical-infrastructure monitoring.
+v1.2 adds a real open-data connector to Fintraffic Digitraffic's Finnish marine AIS API.
 
-## v1.0
-- Common Operating Picture with interactive maritime map
-- Before / Incident / After time filtering
-- Vessel review queue and vessel profiles
-- Proximity, speed and course indicators
-- Incident investigation workspace
-- Source-fusion / verification panel
-- Initial Intelligence Brief with download
-- Clear separation between observation, assessment and attribution
-- Synthetic demo data only
+## Data modes
+- **Fintraffic Digitraffic — LIVE:** current open AIS vessel positions and metadata.
+- **Synthetic demo:** local fallback/demo dataset.
+
+The infrastructure layer remains synthetic and is labelled as such.
 
 ## Run
 ```bash
@@ -19,5 +14,9 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Important
-All vessel tracks, identifiers, infrastructure and incident details in this repository are synthetic. Analytic indicators are not evidence of wrongdoing, causation, intent or attribution.
+## Important limitations
+AIS is an observation source, not proof of identity, intent, causation or attribution. Coverage can be incomplete, delayed or erroneous. Corroborate operational conclusions with independent sources.
+
+## Open-data sources for expansion
+- Fintraffic Digitraffic marine traffic / AIS
+- Norwegian Coastal Administration / BarentsWatch AIS
