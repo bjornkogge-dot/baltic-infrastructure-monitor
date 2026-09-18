@@ -1,14 +1,22 @@
-# Baltic Infrastructure Monitor v1.3.1
+# Baltic Infrastructure Monitor v1.2
 
-Cable-layer reliability fix.
+v1.2 adds a real open-data connector to Fintraffic Digitraffic's Finnish marine AIS API.
 
-- Uses the official EMODnet Human Activities WFS endpoint.
-- Resolves WFS layers by both machine name and human-readable title.
-- Prioritises actual telecommunication cable routes over landing stations/schematic layers.
-- Uses a WFS 1.1.0 GetFeature request with EPSG:4326 for the Baltic bbox.
-- Supports MultiLineString and GeometryCollection.
-- Makes cable routes visually thicker.
-- Shows CABLE LAYER ONLINE/OFFLINE and connector diagnostics.
-- Does **not** silently substitute fictional cable routes when the live source fails.
+## Data modes
+- **Fintraffic Digitraffic — LIVE:** current open AIS vessel positions and metadata.
+- **Synthetic demo:** local fallback/demo dataset.
 
-AIS remains sourced from Fintraffic Digitraffic. The local synthetic layer can still be enabled manually and is explicitly labelled.
+The infrastructure layer remains synthetic and is labelled as such.
+
+## Run
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+## Important limitations
+AIS is an observation source, not proof of identity, intent, causation or attribution. Coverage can be incomplete, delayed or erroneous. Corroborate operational conclusions with independent sources.
+
+## Open-data sources for expansion
+- Fintraffic Digitraffic marine traffic / AIS
+- Norwegian Coastal Administration / BarentsWatch AIS
