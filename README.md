@@ -1,13 +1,14 @@
-# Baltic Infrastructure Monitor — Prototype v0.1
+# Baltic Infrastructure Monitor — Prototype v0.2
 
-Synthetic demonstration only.
+Interactive Streamlit customer demo for maritime situational awareness and critical-infrastructure monitoring.
 
-## Run
-1. Install Python 3.11+
-2. Open a terminal in this folder.
-3. `pip install -r requirements.txt`
-4. `streamlit run app.py`
+**Important:** all vessel tracks, identifiers, infrastructure and incident details included in this repository are synthetic demonstration data. Review indicators are not evidence of wrongdoing or attribution.
 
-The prototype displays fictional AIS tracks, a fictional subsea cable, an incident marker, proximity calculations, movement indicators and a neutral `REQUIRES REVIEW` flag.
+## Run locally
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
 
-Replace `ais_demo.csv` later with normalized licensed AIS/API data.
+## Deploy
+Push the files to the repository connected to Streamlit Community Cloud. Streamlit will redeploy automatically after the commit.
