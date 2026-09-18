@@ -1,22 +1,23 @@
-# Baltic Infrastructure Monitor v1.2
+# Baltic / High North Intelligence — v2.0
 
-v1.2 adds a real open-data connector to Fintraffic Digitraffic's Finnish marine AIS API.
+Operational Intelligence Map prototype inspired by map-first event workflows, but designed around multi-source verification and critical-infrastructure intelligence.
 
-## Data modes
-- **Fintraffic Digitraffic — LIVE:** current open AIS vessel positions and metadata.
-- **Synthetic demo:** local fallback/demo dataset.
+## v2.0
+- Common Operating Picture
+- Live Fintraffic AIS
+- EMODnet subsea cable / pipeline layers
+- Intelligence Feed
+- What Changed panel
+- Timeline / replay interaction shell
+- Incident Investigation
+- Incident Graph
+- Strict visual separation of live/open-source observations and synthetic demo incidents
 
-The infrastructure layer remains synthetic and is labelled as such.
+## Next
+v2.1 should persist observations/events in a database and make timeline replay functional rather than illustrative.
 
 ## Run
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
-
-## Important limitations
-AIS is an observation source, not proof of identity, intent, causation or attribution. Coverage can be incomplete, delayed or erroneous. Corroborate operational conclusions with independent sources.
-
-## Open-data sources for expansion
-- Fintraffic Digitraffic marine traffic / AIS
-- Norwegian Coastal Administration / BarentsWatch AIS
