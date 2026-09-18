@@ -1,24 +1,14 @@
-# Baltic Infrastructure Monitor v1.3
+# Baltic Infrastructure Monitor v1.3.1
 
-First multi-source data-fusion prototype.
+Cable-layer reliability fix.
 
-## Connected
-- Fintraffic Digitraffic live AIS
-- Fintraffic Portnet availability/context
-- Fintraffic sea-state estimation availability
-- Fintraffic AtoN fault availability
-- EMODnet Human Activities WFS discovery for cables and pipelines
+- Uses the official EMODnet Human Activities WFS endpoint.
+- Resolves WFS layers by both machine name and human-readable title.
+- Prioritises actual telecommunication cable routes over landing stations/schematic layers.
+- Uses a WFS 1.1.0 GetFeature request with EPSG:4326 for the Baltic bbox.
+- Supports MultiLineString and GeometryCollection.
+- Makes cable routes visually thicker.
+- Shows CABLE LAYER ONLINE/OFFLINE and connector diagnostics.
+- Does **not** silently substitute fictional cable routes when the live source fails.
 
-## Staged
-- BarentsWatch / Norwegian Coastal Administration AIS. This requires registration and an API client/token, so credentials must be stored in Streamlit Secrets rather than committed to GitHub.
-
-## Architecture
-OBSERVED → CORRELATED → CORROBORATED → ASSESSED
-
-Source identity is preserved throughout the UI. Proximity or vessel movement alone is not treated as evidence of causation, intent, wrongdoing or attribution.
-
-## Run
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
+AIS remains sourced from Fintraffic Digitraffic. The local synthetic layer can still be enabled manually and is explicitly labelled.

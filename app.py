@@ -65,35 +65,69 @@ def fintraffic_context():
     return out
 
 @st.cache_data(ttl=3600)
-def emodnet_layer_names():
-    r=requests.get(EMOD_WFS,params={"service":"WFS","request":"GetCapabilities","version":"2.0.0"},headers=UA,timeout=20)
+def emodnet_catalog():
+    """Return WFS feature types with both machine name and human title."""
+    r=requests.get(
+        EMOD_WFS,
+        params={"service":"WFS","request":"GetCapabilities","version":"2.0.0"},
+        headers=UA,timeout=25
+    )
     r.raise_for_status()
     root=ET.fromstring(r.content)
-    names=[]
-    for e in root.iter():
-        if e.tag.endswith("FeatureType"):
-            for ch in e:
-                if ch.tag.endswith("Name") and ch.text: names.append(ch.text)
-    return names
+    out=[]
+    for ft in root.iter():
+        if not ft.tag.endswith("FeatureType"): continue
+        name=title=None
+        for ch in ft:
+            if ch.tag.endswith("Name"): name=ch.text
+            elif ch.tag.endswith("Title"): title=ch.text
+        if name: out.append({"name":name,"title":title or name})
+    return out
+
+def _score_layer(item, kind):
+    hay=(item["name"]+" "+item["title"]).lower()
+    if kind=="cable":
+        # Prefer actual telecommunication routes; then generic telecom/power cable layers.
+        terms=[("actual",8),("telecommunication",6),("telecom",6),("cable",4),("schematic",1),
+               ("landing", -6),("station",-6)]
+    else:
+        terms=[("offshore",5),("pipeline",6),("route",2)]
+    return sum(w for t,w in terms if t in hay)
 
 @st.cache_data(ttl=1800)
-def emodnet_features(keyword, bbox="18,54,31,66", limit=1000):
-    names=emodnet_layer_names()
-    candidates=[n for n in names if keyword.lower() in n.lower()]
-    if not candidates: return [], None
-    layer=candidates[0]
-    params={"service":"WFS","version":"2.0.0","request":"GetFeature","typeNames":layer,
-            "bbox":bbox,"outputFormat":"application/json","count":limit}
-    try: return get_json(EMOD_WFS,params=params,timeout=25).get("features",[]),layer
-    except Exception: return [],layer
+def emodnet_features(kind, bbox="18,54,31,66", limit=2500):
+    catalog=emodnet_catalog()
+    ranked=sorted(catalog,key=lambda x:_score_layer(x,kind),reverse=True)
+    ranked=[x for x in ranked if _score_layer(x,kind)>0]
+    attempts=[]
+    # WFS 1.1.0 is used deliberately here because EMODnet's own GetFeature example
+    # uses 1.1.0 and lon/lat bbox ordering is less error-prone for this prototype.
+    for item in ranked[:8]:
+        params={"service":"WFS","version":"1.1.0","request":"GetFeature",
+                "typeName":item["name"],"bbox":bbox,
+                "outputFormat":"application/json","maxFeatures":limit,"srsName":"EPSG:4326"}
+        try:
+            js=get_json(EMOD_WFS,params=params,timeout=30)
+            feats=js.get("features",[]) if isinstance(js,dict) else []
+            attempts.append((item["title"],len(feats)))
+            if feats:
+                return feats,item["name"],item["title"],attempts
+        except Exception as e:
+            attempts.append((item["title"],"error"))
+    return [],None,None,attempts
 
 def flatten_geom(feature):
+    """Flatten common GeoJSON line geometries while preserving breaks."""
     g=feature.get("geometry") or {}; typ=g.get("type"); c=g.get("coordinates")
     pts=[]
-    if typ=="Point": pts=[c]
-    elif typ=="LineString": pts=c
-    elif typ=="MultiLineString":
+    if not c: return pts
+    if typ=="Point": return [c]
+    if typ=="LineString": return c
+    if typ=="MultiLineString":
         for line in c: pts += line + [[None,None]]
+    elif typ=="GeometryCollection":
+        for gg in g.get("geometries",[]):
+            fake={"geometry":gg}; pts += flatten_geom(fake) + [[None,None]]
     return pts
 
 st.markdown('<div class="kicker">MULTI-SOURCE OPEN INTELLIGENCE / MARITIME DOMAIN</div>',unsafe_allow_html=True)
@@ -120,20 +154,28 @@ errors=[]
 try: ais=fintraffic_ais().head(max_vessels) if show_ais else pd.DataFrame()
 except Exception as e: ais=pd.DataFrame(); errors.append("Fintraffic AIS")
 ctx=fintraffic_context()
-try: cables,cable_layer=emodnet_features("cable") if show_cables else ([],None)
-except Exception: cables=[]; cable_layer=None; errors.append("EMODnet cables")
-try: pipes,pipe_layer=emodnet_features("pipeline") if show_pipes else ([],None)
-except Exception: pipes=[]; pipe_layer=None; errors.append("EMODnet pipelines")
+try: cables,cable_layer,cable_title,cable_attempts=emodnet_features("cable") if show_cables else ([],None,None,[])
+except Exception: cables=[]; cable_layer=None; cable_title=None; cable_attempts=[]; errors.append("EMODnet cables")
+try: pipes,pipe_layer,pipe_title,pipe_attempts=emodnet_features("pipeline") if show_pipes else ([],None,None,[])
+except Exception: pipes=[]; pipe_layer=None; pipe_title=None; pipe_attempts=[]; errors.append("EMODnet pipelines")
 
 m1,m2,m3,m4,m5=st.columns(5)
 m1.metric("AIS OBSERVATIONS",f"{len(ais):,}")
-m2.metric("CABLE FEATURES",f"{len(cables):,}")
+m2.metric("CABLE LAYER","ONLINE" if len(cables) else "OFFLINE")
 m3.metric("PIPELINE FEATURES",f"{len(pipes):,}")
 m4.metric("PORT CALL RECORDS",ctx.get("port_calls") if ctx.get("port_calls") is not None else "N/A")
 m5.metric("ATON FAULTS",ctx.get("aton_faults") if ctx.get("aton_faults") is not None else "N/A")
 
 if errors: st.warning("Some open-data connectors did not respond: "+", ".join(errors)+". Other layers remain available.")
 else: st.success("MULTI-SOURCE DATA FUSION ACTIVE — independent open-data layers are being loaded from official services.")
+if show_cables and not len(cables):
+    st.error("CABLE LAYER OFFLINE — EMODnet returned no cable geometry for the Baltic query. AIS remains live, but the app will not pretend that synthetic cable routes are real.")
+    with st.expander("Cable connector diagnostics"):
+        st.write("WFS endpoint:", EMOD_WFS)
+        st.write("Layer attempts:", cable_attempts if cable_attempts else "No matching cable feature type resolved.")
+elif show_cables:
+    st.info(f"CABLE LAYER ONLINE — {len(cables):,} EMODnet features loaded from: {cable_title or cable_layer}.")
+
 
 mapcol,side=st.columns([2.45,1],gap="large")
 with mapcol:
@@ -149,7 +191,7 @@ with mapcol:
             pts=flatten_geom(f)
             if pts:
                 lons=[p[0] for p in pts]; lats=[p[1] for p in pts]
-                fig.add_trace(go.Scattermap(lat=lats,lon=lons,mode="lines",line={"width":3},
+                fig.add_trace(go.Scattermap(lat=lats,lon=lons,mode="lines",line={"width":6 if label=="EMODnet cable" else 4},
                     name=label if i==0 else label,showlegend=(i==0),
                     hovertemplate=f"<b>{label}</b><extra></extra>"))
     if show_demo:
@@ -167,7 +209,7 @@ with side:
     def status(v): return "AVAILABLE" if v is not None else "UNAVAILABLE"
     st.markdown(f"""<div class="panel">
     <b>Fintraffic AIS</b><br><span class="small">{len(ais):,} current observations</span><br><br>
-    <b>EMODnet cables</b><br><span class="small">{len(cables):,} features • {cable_layer or 'layer not resolved'}</span><br><br>
+    <b>EMODnet cables</b><br><span class="small">{len(cables):,} features • {cable_title or cable_layer or 'OFFLINE'}</span><br><br>
     <b>EMODnet pipelines</b><br><span class="small">{len(pipes):,} features • {pipe_layer or 'not enabled / unresolved'}</span><br><br>
     <b>Fintraffic Portnet</b><br><span class="small">{status(ctx.get('port_calls'))}</span><br><br>
     <b>Sea-state estimates</b><br><span class="small">{status(ctx.get('sea_state'))}</span><br><br>
