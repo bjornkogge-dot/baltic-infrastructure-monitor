@@ -1,14 +1,23 @@
-# Baltic Infrastructure Monitor — Prototype v0.2
+# Baltic Infrastructure Monitor v1.0
 
-Interactive Streamlit customer demo for maritime situational awareness and critical-infrastructure monitoring.
+Customer-demo prototype for maritime situational awareness and critical-infrastructure monitoring.
 
-**Important:** all vessel tracks, identifiers, infrastructure and incident details included in this repository are synthetic demonstration data. Review indicators are not evidence of wrongdoing or attribution.
+## v1.0
+- Common Operating Picture with interactive maritime map
+- Before / Incident / After time filtering
+- Vessel review queue and vessel profiles
+- Proximity, speed and course indicators
+- Incident investigation workspace
+- Source-fusion / verification panel
+- Initial Intelligence Brief with download
+- Clear separation between observation, assessment and attribution
+- Synthetic demo data only
 
-## Run locally
+## Run
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Deploy
-Push the files to the repository connected to Streamlit Community Cloud. Streamlit will redeploy automatically after the commit.
+## Important
+All vessel tracks, identifiers, infrastructure and incident details in this repository are synthetic. Analytic indicators are not evidence of wrongdoing, causation, intent or attribution.
