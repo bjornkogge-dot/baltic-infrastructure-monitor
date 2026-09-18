@@ -1,22 +1,24 @@
-# Baltic Infrastructure Monitor v1.2
+# Baltic Infrastructure Monitor v1.3
 
-v1.2 adds a real open-data connector to Fintraffic Digitraffic's Finnish marine AIS API.
+First multi-source data-fusion prototype.
 
-## Data modes
-- **Fintraffic Digitraffic — LIVE:** current open AIS vessel positions and metadata.
-- **Synthetic demo:** local fallback/demo dataset.
+## Connected
+- Fintraffic Digitraffic live AIS
+- Fintraffic Portnet availability/context
+- Fintraffic sea-state estimation availability
+- Fintraffic AtoN fault availability
+- EMODnet Human Activities WFS discovery for cables and pipelines
 
-The infrastructure layer remains synthetic and is labelled as such.
+## Staged
+- BarentsWatch / Norwegian Coastal Administration AIS. This requires registration and an API client/token, so credentials must be stored in Streamlit Secrets rather than committed to GitHub.
+
+## Architecture
+OBSERVED → CORRELATED → CORROBORATED → ASSESSED
+
+Source identity is preserved throughout the UI. Proximity or vessel movement alone is not treated as evidence of causation, intent, wrongdoing or attribution.
 
 ## Run
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
-
-## Important limitations
-AIS is an observation source, not proof of identity, intent, causation or attribution. Coverage can be incomplete, delayed or erroneous. Corroborate operational conclusions with independent sources.
-
-## Open-data sources for expansion
-- Fintraffic Digitraffic marine traffic / AIS
-- Norwegian Coastal Administration / BarentsWatch AIS

@@ -1,14 +1,13 @@
 import streamlit as st
 import pandas as pd
-import requests
+import requests, xml.etree.ElementTree as ET
 import plotly.graph_objects as go
-from math import radians, sin, cos, asin, sqrt
 from datetime import datetime, timezone
 
-st.set_page_config(page_title="Baltic Infrastructure Monitor v1.2", page_icon="◉", layout="wide")
+st.set_page_config(page_title="Baltic Infrastructure Monitor v1.3", page_icon="◉", layout="wide")
 st.markdown("""
 <style>
-.stApp{background:#061019;color:#eaf2f7}.block-container{padding-top:1rem;max-width:1550px}
+.stApp{background:#061019;color:#eaf2f7}.block-container{padding-top:1rem;max-width:1580px}
 [data-testid="stSidebar"]{background:#08151f}
 [data-testid="stMetric"]{background:#0c1a25;border:1px solid #223746;border-radius:9px;padding:12px}
 .panel{background:#0c1a25;border:1px solid #223746;border-radius:9px;padding:15px;margin-bottom:12px}
@@ -16,32 +15,29 @@ st.markdown("""
 .small{color:#8fa6b5;font-size:.82rem}.badge{font-size:.73rem;letter-spacing:.08em;font-weight:800;padding:.3rem .5rem;border:1px solid #456173;border-radius:5px;display:inline-block}
 </style>""", unsafe_allow_html=True)
 
-DIGI_LOC="https://meri.digitraffic.fi/api/ais/v1/locations"
-DIGI_VES="https://meri.digitraffic.fi/api/ais/v1/vessels"
-HEADERS={"User-Agent":"BalticInfrastructureMonitor/1.2 demo"}
+UA={"User-Agent":"BalticInfrastructureMonitor/1.3 open-data-demo"}
+AIS_LOC="https://meri.digitraffic.fi/api/ais/v1/locations"
+AIS_META="https://meri.digitraffic.fi/api/ais/v1/vessels"
+PORT_CALLS="https://meri.digitraffic.fi/api/port-call/v1/port-calls"
+PORTS="https://meri.digitraffic.fi/api/port-call/v1/ports"
+SSE="https://meri.digitraffic.fi/api/sse/v1/measurements"
+ATON="https://meri.digitraffic.fi/api/aton/v1/faults"
+EMOD_WFS="https://ows.emodnet-humanactivities.eu/wfs"
 
-def hav(lat1,lon1,lat2,lon2):
-    R=6371; dlat=radians(lat2-lat1); dlon=radians(lon2-lon1)
-    a=sin(dlat/2)**2+cos(radians(lat1))*cos(radians(lat2))*sin(dlon/2)**2
-    return 2*R*asin(sqrt(a))
+def get_json(url, params=None, timeout=15):
+    r=requests.get(url,params=params,headers=UA,timeout=timeout); r.raise_for_status(); return r.json()
 
 @st.cache_data(ttl=60)
-def digitraffic_live():
-    loc=requests.get(DIGI_LOC,headers=HEADERS,timeout=12); loc.raise_for_status()
-    ves=requests.get(DIGI_VES,headers=HEADERS,timeout=12); ves.raise_for_status()
-    gj=loc.json(); meta=ves.json()
+def fintraffic_ais():
+    gj=get_json(AIS_LOC); meta=get_json(AIS_META)
     rows=[]
     for f in gj.get("features",[]):
         p=f.get("properties",{}); c=f.get("geometry",{}).get("coordinates",[None,None])
-        mmsi=str(p.get("mmsi",f.get("mmsi","")))
-        rows.append({"mmsi":mmsi,"longitude":c[0],"latitude":c[1],
-                     "speed_kn":p.get("sog"),"course_deg":p.get("cog"),
-                     "heading":p.get("heading"),"timestamp":p.get("timestamp") or p.get("time")})
+        rows.append({"mmsi":str(p.get("mmsi",f.get("mmsi",""))),"longitude":c[0],"latitude":c[1],
+                     "speed_kn":p.get("sog"),"course_deg":p.get("cog"),"heading":p.get("heading"),
+                     "timestamp":p.get("timestamp") or p.get("time")})
     pos=pd.DataFrame(rows)
-    # API metadata may be a list or a wrapper object depending on version.
-    if isinstance(meta,dict):
-        items=meta.get("vessels") or meta.get("features") or meta.get("data") or []
-    else: items=meta
+    items=(meta.get("vessels") or meta.get("features") or meta.get("data") or []) if isinstance(meta,dict) else meta
     mr=[]
     for x in items:
         p=x.get("properties",x) if isinstance(x,dict) else {}
@@ -49,110 +45,145 @@ def digitraffic_live():
                    "imo":p.get("imo"),"call_sign":p.get("callSign"),"destination":p.get("destination"),
                    "ship_type":p.get("type")})
     md=pd.DataFrame(mr)
-    if len(md) and "mmsi" in md: pos=pos.merge(md,on="mmsi",how="left")
+    if len(md): pos=pos.merge(md,on="mmsi",how="left")
     if "vessel_name" not in pos: pos["vessel_name"]="Unknown vessel"
     pos["vessel_name"]=pos["vessel_name"].fillna("Unknown vessel")
-    pos=pos.dropna(subset=["latitude","longitude"])
-    return pos
+    return pos.dropna(subset=["latitude","longitude"])
 
-def synthetic():
-    d=pd.read_csv("ais_demo.csv")
-    return d
+@st.cache_data(ttl=300)
+def fintraffic_context():
+    out={}
+    for key,url in [("port_calls",PORT_CALLS),("ports",PORTS),("sea_state",SSE),("aton_faults",ATON)]:
+        try:
+            x=get_json(url,timeout=12)
+            if isinstance(x,list): out[key]=len(x)
+            elif isinstance(x,dict):
+                seq=x.get("features") or x.get("portCalls") or x.get("data") or x.get("measurements") or x.get("faults")
+                out[key]=len(seq) if isinstance(seq,list) else 1
+            else: out[key]=0
+        except Exception: out[key]=None
+    return out
 
-st.markdown('<div class="kicker">OPEN-SOURCE MARITIME SITUATIONAL AWARENESS</div>',unsafe_allow_html=True)
+@st.cache_data(ttl=3600)
+def emodnet_layer_names():
+    r=requests.get(EMOD_WFS,params={"service":"WFS","request":"GetCapabilities","version":"2.0.0"},headers=UA,timeout=20)
+    r.raise_for_status()
+    root=ET.fromstring(r.content)
+    names=[]
+    for e in root.iter():
+        if e.tag.endswith("FeatureType"):
+            for ch in e:
+                if ch.tag.endswith("Name") and ch.text: names.append(ch.text)
+    return names
+
+@st.cache_data(ttl=1800)
+def emodnet_features(keyword, bbox="18,54,31,66", limit=1000):
+    names=emodnet_layer_names()
+    candidates=[n for n in names if keyword.lower() in n.lower()]
+    if not candidates: return [], None
+    layer=candidates[0]
+    params={"service":"WFS","version":"2.0.0","request":"GetFeature","typeNames":layer,
+            "bbox":bbox,"outputFormat":"application/json","count":limit}
+    try: return get_json(EMOD_WFS,params=params,timeout=25).get("features",[]),layer
+    except Exception: return [],layer
+
+def flatten_geom(feature):
+    g=feature.get("geometry") or {}; typ=g.get("type"); c=g.get("coordinates")
+    pts=[]
+    if typ=="Point": pts=[c]
+    elif typ=="LineString": pts=c
+    elif typ=="MultiLineString":
+        for line in c: pts += line + [[None,None]]
+    return pts
+
+st.markdown('<div class="kicker">MULTI-SOURCE OPEN INTELLIGENCE / MARITIME DOMAIN</div>',unsafe_allow_html=True)
 st.markdown("# BALTIC INFRASTRUCTURE MONITOR")
-st.caption("v1.2 • Open AIS integration • Finland / Baltic Sea")
+st.caption("v1.3 • Data Fusion Prototype • AIS + Infrastructure + Port/Sea-State Context")
 
 with st.sidebar:
-    st.markdown("### DATA SOURCE")
-    source=st.radio("AIS feed",["Fintraffic Digitraffic — LIVE","Synthetic demo"],index=0)
-    st.caption("Live mode uses Fintraffic's open Finnish marine AIS API. Coverage is source-dependent.")
+    st.markdown("### DATA FUSION")
+    show_ais=st.toggle("Fintraffic live AIS",True)
+    show_cables=st.toggle("EMODnet cables",True)
+    show_pipes=st.toggle("EMODnet pipelines",False)
+    show_demo=st.toggle("Synthetic fallback layer",False)
     st.divider()
-    refresh=st.button("Refresh live AIS",use_container_width=True)
-    st.markdown("### FILTERS")
-    max_vessels=st.slider("Maximum vessels",100,3000,1000,100)
-    speed_filter=st.slider("Minimum SOG (kn)",0.0,25.0,0.0,0.5)
-    show_names=st.toggle("Show vessel names",False)
+    max_vessels=st.slider("AIS vessel limit",100,3000,1200,100)
+    st.caption("EMODnet layers are queried through its official WFS service.")
     st.divider()
-    st.markdown("### ANALYTIC LAYERS")
-    show_infra=st.toggle("Demo infrastructure",True)
-    st.caption("Infrastructure layer remains synthetic in v1.2 and is visually separated from live AIS.")
+    st.markdown("### HIGH NORTH CONNECTOR")
+    st.info("BarentsWatch adapter is staged for v1.3 but requires a free API client/token. Keep credentials in Streamlit Secrets — never in GitHub.")
 
-if refresh: st.cache_data.clear()
+if st.button("Refresh open data"):
+    st.cache_data.clear()
 
-live=False; error=None
-if source.startswith("Fintraffic"):
-    try:
-        data=digitraffic_live(); live=True
-    except Exception as e:
-        error=str(e); data=synthetic()
-else: data=synthetic()
+errors=[]
+try: ais=fintraffic_ais().head(max_vessels) if show_ais else pd.DataFrame()
+except Exception as e: ais=pd.DataFrame(); errors.append("Fintraffic AIS")
+ctx=fintraffic_context()
+try: cables,cable_layer=emodnet_features("cable") if show_cables else ([],None)
+except Exception: cables=[]; cable_layer=None; errors.append("EMODnet cables")
+try: pipes,pipe_layer=emodnet_features("pipeline") if show_pipes else ([],None)
+except Exception: pipes=[]; pipe_layer=None; errors.append("EMODnet pipelines")
 
-if live:
-    st.success("LIVE OPEN DATA — Fintraffic Digitraffic AIS. Vessel positions are real source observations; no intent or attribution is inferred.")
-else:
-    if error: st.error("Live AIS could not be reached from this deployment. Showing synthetic fallback data instead.")
-    else: st.info("Synthetic demo mode.")
-    if error: st.caption("Connector error: "+error[:220])
+m1,m2,m3,m4,m5=st.columns(5)
+m1.metric("AIS OBSERVATIONS",f"{len(ais):,}")
+m2.metric("CABLE FEATURES",f"{len(cables):,}")
+m3.metric("PIPELINE FEATURES",f"{len(pipes):,}")
+m4.metric("PORT CALL RECORDS",ctx.get("port_calls") if ctx.get("port_calls") is not None else "N/A")
+m5.metric("ATON FAULTS",ctx.get("aton_faults") if ctx.get("aton_faults") is not None else "N/A")
 
-infra=pd.read_csv("infrastructure.csv")
-data["speed_kn"]=pd.to_numeric(data.get("speed_kn"),errors="coerce")
-data=data[data["speed_kn"].fillna(0)>=speed_filter].head(max_vessels)
+if errors: st.warning("Some open-data connectors did not respond: "+", ".join(errors)+". Other layers remain available.")
+else: st.success("MULTI-SOURCE DATA FUSION ACTIVE — independent open-data layers are being loaded from official services.")
 
-m1,m2,m3,m4=st.columns(4)
-m1.metric("AIS OBSERVATIONS",f"{len(data):,}")
-m2.metric("DATA MODE","LIVE" if live else "SYNTHETIC")
-m3.metric("SOURCE","FINTRAFFIC" if live else "LOCAL DEMO")
-m4.metric("REFRESH","60 SEC CACHE" if live else "STATIC")
-
-mapcol,side=st.columns([2.4,1],gap="large")
+mapcol,side=st.columns([2.45,1],gap="large")
 with mapcol:
     st.markdown("### COMMON OPERATING PICTURE")
     fig=go.Figure()
-    if live:
-        text=[]
-        for _,r in data.iterrows():
-            nm=r.get("vessel_name","Unknown vessel")
-            text.append(f"<b>{nm}</b><br>MMSI {r.get('mmsi','')}<br>SOG {r.get('speed_kn','?')} kn<br>COG {r.get('course_deg','?')}°")
-        fig.add_trace(go.Scattermap(lat=data.latitude,lon=data.longitude,mode="markers+text" if show_names else "markers",
-            text=data.vessel_name if show_names else None,customdata=text,marker={"size":7},
-            hovertemplate="%{customdata}<extra></extra>",name="Live AIS"))
-    else:
-        for vessel,g in data.groupby("vessel_name"):
-            fig.add_trace(go.Scattermap(lat=g.latitude,lon=g.longitude,mode="lines+markers",name=vessel,
-                marker={"size":7},hovertemplate=vessel+"<extra></extra>"))
-    if show_infra and {"start_lat","start_lon","end_lat","end_lon"}.issubset(infra.columns):
+    if len(ais):
+        fig.add_trace(go.Scattermap(lat=ais.latitude,lon=ais.longitude,mode="markers",
+            marker={"size":6},name="Fintraffic AIS",
+            text=ais.apply(lambda r:f"<b>{r.get('vessel_name','Unknown')}</b><br>MMSI {r.get('mmsi','')}<br>SOG {r.get('speed_kn','?')} kn<br>COG {r.get('course_deg','?')}°",axis=1),
+            hovertemplate="%{text}<extra></extra>"))
+    for features,label in [(cables,"EMODnet cable"),(pipes,"EMODnet pipeline")]:
+        for i,f in enumerate(features[:300]):
+            pts=flatten_geom(f)
+            if pts:
+                lons=[p[0] for p in pts]; lats=[p[1] for p in pts]
+                fig.add_trace(go.Scattermap(lat=lats,lon=lons,mode="lines",line={"width":3},
+                    name=label if i==0 else label,showlegend=(i==0),
+                    hovertemplate=f"<b>{label}</b><extra></extra>"))
+    if show_demo:
+        infra=pd.read_csv("infrastructure.csv")
         for _,r in infra.iterrows():
             fig.add_trace(go.Scattermap(lat=[r.start_lat,r.end_lat],lon=[r.start_lon,r.end_lon],
-                mode="lines",line={"width":4},name="SYNTHETIC: "+r["name"],
-                hovertemplate="<b>SYNTHETIC INFRASTRUCTURE</b><br>"+r["name"]+"<extra></extra>"))
-    fig.update_layout(map={"style":"carto-darkmatter","center":{"lat":60.0,"lon":24.5},"zoom":5.3},
-        height=690,margin={"l":0,"r":0,"t":0,"b":0},paper_bgcolor="#061019",font={"color":"#dce8ef"})
+                mode="lines",line={"width":4},name="SYNTHETIC: "+r["name"]))
+    fig.update_layout(map={"style":"carto-darkmatter","center":{"lat":59.7,"lon":24.5},"zoom":4.7},
+        height=720,margin={"l":0,"r":0,"t":0,"b":0},paper_bgcolor="#061019",font={"color":"#dce8ef"})
     st.plotly_chart(fig,use_container_width=True)
-    st.caption("Live AIS reflects what the open source exposes at retrieval time. AIS can be incomplete, delayed, erroneous or absent and should be corroborated for operational use.")
+    st.caption("Layers retain their source identity. Proximity alone does not establish causation, intent, wrongdoing or attribution.")
 
 with side:
-    st.markdown("### SOURCE STATUS")
-    st.markdown(f"""<div class="panel"><span class="badge">{'LIVE' if live else 'FALLBACK'}</span><br><br>
-    <b>{'Fintraffic Digitraffic' if live else 'Synthetic local dataset'}</b><br>
-    <span class="small">{'Open Finnish marine traffic AIS API' if live else 'Demonstration data only'}</span>
-    <hr><b>Observations loaded</b><br>{len(data):,}</div>""",unsafe_allow_html=True)
-    st.markdown("### VESSEL INSPECTOR")
-    if len(data):
-        opts=data.drop_duplicates("mmsi").copy()
-        opts["label"]=opts.apply(lambda r:f"{r.get('vessel_name','Unknown')} · {r.get('mmsi','')}",axis=1)
-        chosen=st.selectbox("Vessel",opts["label"].tolist())
-        r=opts[opts.label==chosen].iloc[0]
-        st.markdown(f"""<div class="panel"><b>{r.get('vessel_name','Unknown vessel')}</b><br>
-        <span class="small">MMSI {r.get('mmsi','—')} • IMO {r.get('imo','—')}</span><hr>
-        SOG <b>{r.get('speed_kn','—')} kn</b><br>COG <b>{r.get('course_deg','—')}°</b><br>
-        Destination <b>{r.get('destination','—')}</b></div>""",unsafe_allow_html=True)
-    st.markdown("### VERIFICATION")
-    st.markdown("""<div class="panel"><b>Observation</b><br><span class="small">AIS position / metadata from selected source.</span><br><br>
-    <b>Assessment</b><br><span class="small">Not automatically inferred from proximity or movement.</span><br><br>
-    <b>Attribution</b><br><span class="small">Not established by AIS alone.</span></div>""",unsafe_allow_html=True)
+    st.markdown("### SOURCE FUSION")
+    def status(v): return "AVAILABLE" if v is not None else "UNAVAILABLE"
+    st.markdown(f"""<div class="panel">
+    <b>Fintraffic AIS</b><br><span class="small">{len(ais):,} current observations</span><br><br>
+    <b>EMODnet cables</b><br><span class="small">{len(cables):,} features • {cable_layer or 'layer not resolved'}</span><br><br>
+    <b>EMODnet pipelines</b><br><span class="small">{len(pipes):,} features • {pipe_layer or 'not enabled / unresolved'}</span><br><br>
+    <b>Fintraffic Portnet</b><br><span class="small">{status(ctx.get('port_calls'))}</span><br><br>
+    <b>Sea-state estimates</b><br><span class="small">{status(ctx.get('sea_state'))}</span><br><br>
+    <b>AtoN faults</b><br><span class="small">{status(ctx.get('aton_faults'))}</span>
+    </div>""",unsafe_allow_html=True)
+    st.markdown("### FUSION LOGIC")
+    st.markdown("""<div class="panel">
+    <b>OBSERVED</b><br><span class="small">Source-specific raw observation.</span><br><br>
+    <b>CORRELATED</b><br><span class="small">Time/location/entity relationship detected.</span><br><br>
+    <b>CORROBORATED</b><br><span class="small">Supported by independent source classes.</span><br><br>
+    <b>ASSESSED</b><br><span class="small">Human/analytic interpretation, kept separate from facts.</span>
+    </div>""",unsafe_allow_html=True)
+    st.markdown("### HIGH NORTH")
+    st.write("BarentsWatch live + historic AIS is the next authenticated connector. Its credentials should be stored as deployment secrets.")
 
 st.divider()
-st.markdown("### v1.2 DATA ROADMAP")
-st.write("**Connected:** Fintraffic Digitraffic open AIS.  **Next connectors:** Norwegian Coastal Administration / BarentsWatch AIS, open weather and sea-state feeds, port calls, navigation-aid faults, and sourced critical-infrastructure layers.")
-st.caption("Prototype v1.2 • Open-source data integration • Do not use as a sole source for safety, navigation, enforcement, or attribution decisions.")
+st.markdown("### INCIDENT GRAPH — v1.3 FOUNDATION")
+st.code("VESSEL → observed at → POSITION\nPOSITION → near → INFRASTRUCTURE\nVESSEL → planned/recorded → PORT CALL\nPOSITION → contextualised by → SEA STATE\nINFRASTRUCTURE → sourced from → EMODNET\nOBSERVATION → corroborated by → INDEPENDENT SOURCE",language=None)
+st.caption("v1.3 is a prototype, not a navigation, safety, enforcement or attribution system. Open-source data can be incomplete, delayed or erroneous.")
